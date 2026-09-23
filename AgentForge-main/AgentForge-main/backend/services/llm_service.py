@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import time
 from typing import TypeVar
@@ -53,11 +54,11 @@ class LLMService:
         candidates = [role_config, *self.model_registry.get_fallback_configs(model_role)]
 
         failures: list[str] = []
+        runnable_candidates: list[tuple[dict, BaseChatModel]] = []
 
-        for attempt_index, candidate_config in enumerate(candidates):
+        for candidate_config in candidates:
             provider = candidate_config.get("provider")
             model_name = candidate_config.get("model")
-            is_fallback = attempt_index > 0
 
             try:
                 model = self._build_model(candidate_config, model_role)
@@ -78,71 +79,100 @@ class LLMService:
                         details={"model_role": model_role},
                     ) from error
 
-            with self.tracing_service.trace(
-                f"llm:{model_role}",
-                run_type="llm",
-                tags=[tag for tag in (f"agent:{model_role}", f"provider:{provider}" if provider else None) if tag],
-                metadata={
-                    "agent": model_role,
-                    "model_role": model_role,
-                    "provider": provider,
-                    "model": model_name,
-                    "prompt_chars": len(prompt) + len(context),
-                    "fallback_attempt": attempt_index,
+            runnable_candidates.append((candidate_config, model))
+
+        if not runnable_candidates:
+            raise LLMError(
+                f"LLM invocation failed for role '{model_role}': no candidate model could be "
+                f"built. " + " | ".join(failures),
+                details={"model_role": model_role},
+            )
+
+        # Race every candidate provider concurrently and take whichever
+        # responds first -- bounded by the single slowest timeout instead of
+        # the sum of every provider's timeout, the way sequential fallback was.
+        started_at = time.perf_counter()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(runnable_candidates)) as executor:
+            future_to_candidate = {
+                executor.submit(model.invoke, messages): (config, model)
+                for config, model in runnable_candidates
+            }
+
+            response = None
+            winning_config: dict | None = None
+
+            try:
+                for future in concurrent.futures.as_completed(future_to_candidate):
+                    config, _model = future_to_candidate[future]
+                    provider = config.get("provider")
+                    model_name = config.get("model")
+
+                    try:
+                        response = future.result()
+
+                        if response_schema is None:
+                            _normalize_message_content(response)
+
+                        winning_config = config
+                        break
+
+                    except Exception as error:
+                        logger.warning(
+                            "Candidate %s/%s lost the race for role '%s': %s",
+                            provider, model_name, model_role, error,
+                        )
+                        failures.append(f"{provider}/{model_name}: {error}")
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+
+        if response is None or winning_config is None:
+            raise LLMError(
+                f"LLM invocation failed for role '{model_role}' on all "
+                f"{len(runnable_candidates)} candidate model(s): " + " | ".join(failures),
+                details={"model_role": model_role},
+            )
+
+        provider = winning_config.get("provider")
+        model_name = winning_config.get("model")
+
+        if len(runnable_candidates) > 1:
+            logger.info(
+                "Role '%s' won the race via %s/%s (%d candidate(s) raced)",
+                model_role, provider, model_name, len(runnable_candidates),
+            )
+
+        with self.tracing_service.trace(
+            f"llm:{model_role}",
+            run_type="llm",
+            tags=[tag for tag in (f"agent:{model_role}", f"provider:{provider}" if provider else None) if tag],
+            metadata={
+                "agent": model_role,
+                "model_role": model_role,
+                "provider": provider,
+                "model": model_name,
+                "prompt_chars": len(prompt) + len(context),
+                "candidates_raced": len(runnable_candidates),
+            },
+        ) as run:
+            self.tracing_service.set_outputs(
+                run,
+                {
+                    "completion_chars": _content_length(response),
+                    "latency_ms": round((time.perf_counter() - started_at) * 1000, 2),
                 },
-            ) as run:
-                started_at = time.perf_counter()
+            )
 
-                try:
-                    response = model.invoke(messages)
-
-                    if response_schema is None:
-                        _normalize_message_content(response)
-
-                except Exception as error:
-                    if is_fallback:
-                        logger.warning(
-                            "Fallback %d for role '%s' (%s/%s) failed: %s",
-                            attempt_index, model_role, provider, model_name, error,
-                        )
-                    else:
-                        logger.warning(
-                            "LLM invocation failed for role '%s', trying fallback if configured: %s",
-                            model_role, error,
-                        )
-                    failures.append(f"{provider}/{model_name}: {error}")
-                    continue
-
-                if is_fallback:
-                    logger.info(
-                        "Role '%s' recovered via fallback %d (%s/%s)",
-                        model_role, attempt_index, provider, model_name,
-                    )
-
-                self.tracing_service.set_outputs(
-                    run,
-                    {
-                        "completion_chars": _content_length(response),
-                        "latency_ms": round((time.perf_counter() - started_at) * 1000, 2),
-                    },
-                )
-
-                record_llm_call(
-                    _llm_call_info(
-                        response,
-                        provider=provider,
-                        model=model_name,
-                        prompt_characters=len(prompt) + len(context),
-                    )
-                )
-
-                return response
-
-        raise LLMError(
-            f"LLM invocation failed for role '{model_role}' on all "
-            f"{len(candidates)} candidate model(s): " + " | ".join(failures),
-            details={"model_role": model_role},
+        record_llm_call(
+            _llm_call_info(
+                response,
+                provider=provider,
+                model=model_name,
+                prompt_characters=len(prompt) + len(context),
+            )
         )
+
+        return response
 
     def _build_model(
         self,
