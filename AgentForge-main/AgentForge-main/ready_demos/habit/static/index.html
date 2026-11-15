@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Habit Tracker</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        #habit-form { margin-bottom: 30px; }
+        #habit-list { list-style: none; padding: 0; }
+        .habit-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #eee; }
+        .habit-info { flex-grow: 1; }
+        .habit-actions button { margin-left: 10px; padding: 5px 10px; cursor: pointer; }
+        .complete-btn { background-color: #4CAF50; color: white; border: none; }
+        .delete-btn { background-color: #f44336; color: white; border: none; }
+        .status { margin-left: 20px; font-size: 0.9em; color: #555; }
+    </style>
+</head>
+<body>
+    <h1>My Habits</h1>
+
+    <div id="habit-form">
+        <input type="text" id="habit-name-input" placeholder="New habit name" required>
+        <button onclick="addHabit()">Add Habit</button>
+    </div>
+
+    <ul id="habit-list">
+        <!-- Habits will be rendered here -->
+    </ul>
+
+    <script>
+        const API_URL = '/habits';
+        const habitListEl = document.getElementById('habit-list');
+        const habitNameInput = document.getElementById('habit-name-input');
+
+        // --- API Calls ---
+
+        async function fetchHabits() {
+            try {
+                const response = await fetch(API_URL);
+                if (!response.ok) throw new Error('Failed to fetch habits');
+                const habits = await response.json();
+                renderHabits(habits);
+            } catch (error) {
+                console.error("Error fetching habits:", error);
+                habitListEl.innerHTML = '<p style="color: red;">Could not load habits. Check the server connection.</p>';
+            }
+        }
+
+        async function addHabit() {
+            const name = habitNameInput.value.trim();
+            if (!name) return;
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name })
+                });
+
+                if (response.status === 201) {
+                    habitNameInput.value = '';
+                    fetchHabits(); // Refresh list
+                } else {
+                    console.error("Failed to add habit:", await response.text());
+                }
+            } catch (error) {
+                console.error("Error adding habit:", error);
+            }
+        }
+
+        async function checkInHabit(id) {
+            try {
+                const response = await fetch(`${API_URL}/${id}/check-in`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    fetchHabits(); // Refresh list to show updated streak/status
+                } else {
+                    console.error(`Failed to check in habit ${id}:`, await response.text());
+                }
+            } catch (error) {
+                console.error("Error checking in habit:", error);
+            }
+        }
+
+        async function deleteHabit(id) {
+            if (!confirm("Are you sure you want to delete this habit?")) return;
+            try {
+                const response = await fetch(`${API_URL}/${id}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.status === 204) {
+                    fetchHabits(); // Refresh list
+                } else {
+                    console.error(`Failed to delete habit ${id}:`, await response.text());
+                }
+            } catch (error) {
+                console.error("Error deleting habit:", error);
+            }
+        }
+
+        // --- Rendering ---
+
+        function renderHabits(habits) {
+            habitListEl.innerHTML = '';
+            if (habits.length === 0) {
+                habitListEl.innerHTML = '<p>No habits added yet. Use the form above to start tracking!</p>';
+                return;
+            }
+
+            habits.forEach(habit => {
+                const li = document.createElement('li');
+                li.className = 'habit-item';
+                
+                // Determine button state based on completed_today
+                const isCompleted = habit.completed_today;
+                const checkInButton = document.createElement('button');
+                checkInButton.className = 'complete-btn';
+                checkInButton.textContent = isCompleted ? 'Done Today' : 'Check In';
+                checkInButton.disabled = isCompleted; // Optionally disable if already checked in for the day
+                checkInButton.onclick = () => checkInHabit(habit.id);
+
+                const deleteButton = document.createElement('button');
+                deleteButton.className = 'delete-btn';
+                deleteButton.textContent = 'Delete';
+                deleteButton.onclick = () => deleteHabit(habit.id);
+
+                li.innerHTML = `
+                    <div class="habit-info">
+                        <strong>${habit.name}</strong> 
+                        <div class="status">Streak: ${habit.streak} 🔥 | Completed Today: ${habit.completed_today ? '✅' : '❌'}</div>
+                    </div>
+                    <div class="habit-actions">
+                        ${checkInButton.outerHTML}
+                        ${deleteButton.outerHTML}
+                    </div>
+                `;
+                
+                // Re-attach event listeners since innerHTML assignment replaces nodes
+                const itemElement = li.querySelector('.habit-item');
+                if (itemElement) {
+                    const actionsDiv = itemElement.querySelector('.habit-actions');
+                    
+                    // Re-find buttons after DOM construction for event binding safety
+                    const cb = actionsDiv.querySelector('.complete-btn');
+                    const db = actionsDiv.querySelector('.delete-btn');
+
+                    cb.onclick = () => checkInHabit(habit.id);
+                    db.onclick = () => deleteHabit(habit.id);
+                }
+                
+                habitListEl.appendChild(li);
+            });
+        }
+
+        // Initialize on page load
+        window.onload = fetchHabits;
+    </script>
+</body>
+</html>

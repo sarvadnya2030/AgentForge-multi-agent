@@ -1,88 +1,120 @@
 #!/usr/bin/env python3
-"""Parallel multi-agent demo. Planner -> 4 agents IN PARALLEL (Gemini + NIM) -> integrator runs tests.
-Usage: python parallel_demo.py ["project idea"]"""
-import asyncio, json, os, re, subprocess, sys, time
+"""Parallel multi-agent orchestrator. Planner -> 4 agents IN PARALLEL (Gemini + NIM) -> integrator runs tests.
+CLI: python parallel_demo.py ["project idea"]      UI: python ui_server.py"""
+import asyncio, os, re, subprocess, sys, time
 from pathlib import Path
 import httpx
-from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent / ".env")
-GKEY, NKEY = os.environ["GOOGLE_API_KEY"], os.environ["NVIDIA_API_KEY"]
-T0 = time.time()
-OUT = Path(__file__).parent / "workspace" / f"parallel_{int(T0)}"
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass
+GKEY, NKEY = os.environ.get("GOOGLE_API_KEY", ""), os.environ.get("NVIDIA_API_KEY", "")
+BASE = Path("/tmp") if os.environ.get("VERCEL") else Path(__file__).parent / "workspace"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent"
+NIM_MODEL = "nvidia/nemotron-3.5-bolt-e4b"
 C = {"gemini": "\033[96m", "nim": "\033[92m", "orch": "\033[93m", "end": "\033[0m"}
 
 
-def log(who, msg):
-    c = C.get(who.split(":")[0], "")
-    print(f"{c}[{time.time()-T0:5.1f}s] {who:<14}{C['end']} {msg}", flush=True)
-
-
-async def llm(provider, prompt, who):
-    log(who, f"-> calling {provider}")
-    async with httpx.AsyncClient(timeout=120) as h:
+async def _call(provider, prompt):
+    async with httpx.AsyncClient(timeout=90) as h:
         if provider == "gemini":
-            r = await h.post(
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
-                headers={"x-goog-api-key": GKEY},
-                json={"contents": [{"parts": [{"text": prompt}]}]})
+            r = await h.post(GEMINI_URL, headers={"x-goog-api-key": GKEY},
+                             json={"contents": [{"parts": [{"text": prompt}]}]})
             r.raise_for_status()
             return r.json()["candidates"][0]["content"]["parts"][0]["text"]
-        r = await h.post(
-            "https://integrate.api.nvidia.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {NKEY}"},
-            json={"model": "nvidia/nemotron-3.5-bolt-e4b", "max_tokens": 3000,
-                  "messages": [{"role": "user", "content": prompt}]})
+        r = await h.post("https://integrate.api.nvidia.com/v1/chat/completions",
+                         headers={"Authorization": f"Bearer {NKEY}"},
+                         json={"model": NIM_MODEL, "max_tokens": 3000,
+                               "messages": [{"role": "user", "content": prompt}]})
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"]
 
 
-def code(text):  # strip ``` fences
-    m = re.search(r"```(?:\w+)?\n(.*?)```", text, re.S)
-    return (m.group(1) if m else text).strip() + "\n"
+def code(text):  # strip ``` fences (also when the closing fence is missing)
+    t = text.strip()
+    m = re.search(r"```[\w+-]*[ \t]*\n(.*?)(?:```|\Z)", t, re.S)
+    return (m.group(1) if m else t).strip() + "\n"
 
 
-async def agent(name, provider, path, contract, job):
-    who = f"{provider}:{name}"
-    t = time.time()
-    raw = await llm(provider, f"You are the {name} agent. Shared contract (follow EXACTLY):\n{contract}\n\n"
-                              f"Write ONLY the file `{path}`. {job}\nReturn just the file content in one code block.", who)
-    f = OUT / path
-    f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(code(raw))
-    log(who, f"done: wrote {path} ({len(code(raw).splitlines())} lines, {time.time()-t:.1f}s)")
+async def run(idea, emit):
+    """Runs the whole pipeline; emit(dict) is called for every visible step."""
+    t0 = time.time()
+    out = BASE / f"parallel_{int(t0)}"
+    out.mkdir(parents=True, exist_ok=True)
+    now = lambda: round(time.time() - t0, 2)
 
+    async def llm(name, provider, prompt):
+        """One agent call. Falls back to the other provider if this one fails."""
+        emit({"type": "agent", "name": name, "provider": provider, "status": "start", "t": now()})
+        try:
+            text = await _call(provider, prompt)
+        except Exception as e:
+            other = "nim" if provider == "gemini" else "gemini"
+            emit({"type": "agent", "name": name, "provider": provider, "status": "fallback",
+                  "t": now(), "msg": f"{provider} failed ({type(e).__name__}) -> switching to {other}"})
+            provider = other
+            text = await _call(provider, prompt)
+        emit({"type": "agent", "name": name, "provider": provider, "status": "done", "t": now()})
+        return text
 
-async def main():
-    idea = sys.argv[1] if len(sys.argv) > 1 else "a URL shortener with click stats"
-    log("orch", f"project: {idea}")
-    contract = await llm("gemini", (
+    async def worker(name, provider, path, contract, job):
+        raw = await llm(name, provider, f"You are the {name} agent. Shared contract (follow EXACTLY):\n{contract}\n\n"
+                                       f"Write ONLY the file `{path}`. {job}\nReturn just the file content in one code block.")
+        f = out / path
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(code(raw))
+        emit({"type": "file", "path": path, "content": code(raw), "by": name, "t": now()})
+
+    emit({"type": "info", "msg": f"Project: {idea}", "t": now()})
+    contract = await llm("planner", "gemini", (
         f"Project: {idea}. Python FastAPI, in-memory. Write a SHORT API contract (max 20 lines): "
         "exact files app.py (FastAPI `app`, JSON endpoints), static/index.html (served at / by app.py), "
         "tests/test_app.py (pytest + fastapi TestClient, imports `from app import app`), README.md. "
-        "List endpoints with request/response JSON shapes AND the exact HTTP status code each returns (POST create = 201). No code."), "gemini:planner")
-    log("orch", "contract ready -> launching 4 agents IN PARALLEL")
-    (OUT).mkdir(parents=True, exist_ok=True)
+        "List endpoints with request/response JSON shapes AND the exact HTTP status code each returns (POST create = 201). No code."))
+    emit({"type": "contract", "text": contract.strip(), "t": now()})
+    emit({"type": "info", "msg": "Contract ready -> launching 4 agents IN PARALLEL", "t": now(), "parallel": True})
     await asyncio.gather(
-        agent("backend", "gemini", "app.py", contract, "Include serving static/index.html at GET / (FileResponse)."),
-        agent("frontend", "nim", "static/index.html", contract, "Single self-contained HTML page with inline JS using fetch()."),
-        agent("tester", "gemini", "tests/test_app.py", contract, "4 tests. Use ONLY `from app import app` and `from fastapi.testclient import TestClient` (client = TestClient(app)). Import NOTHING else from app. This is FastAPI, NOT Flask. Test only via HTTP calls and the exact status codes in the contract."),
-        agent("docs", "nim", "README.md", contract, "Short README with run instructions."),
+        worker("backend", "gemini", "app.py", contract, "Include serving static/index.html at GET / (FileResponse)."),
+        worker("frontend", "nim", "static/index.html", contract, "Single self-contained HTML page with inline JS using fetch()."),
+        worker("tester", "gemini", "tests/test_app.py", contract, "4 tests. Use ONLY `from app import app` and `from fastapi.testclient import TestClient` (client = TestClient(app)). Import NOTHING else from app. This is FastAPI, NOT Flask. Test only via HTTP calls and the exact status codes in the contract."),
+        worker("docs", "nim", "README.md", contract, "Short README with run instructions."),
     )
-    log("orch", "all parallel agents finished -> integrator runs tests")
+    emit({"type": "info", "msg": "All parallel agents finished -> integrator runs the tests", "t": now()})
+    ok = False
     for attempt in (1, 2, 3):
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "tests"], cwd=OUT, capture_output=True, text=True)
-        log("orch", f"pytest attempt {attempt}: " + (r.stdout.strip().splitlines() or ["?"])[-1])
-        if r.returncode == 0:
+        emit({"type": "agent", "name": "integrator", "provider": "local", "status": "start", "t": now()})
+        r = await asyncio.to_thread(subprocess.run, [sys.executable, "-m", "pytest", "-q", "tests"],
+                                    cwd=out, capture_output=True, text=True)
+        ok = r.returncode == 0
+        emit({"type": "agent", "name": "integrator", "provider": "local", "status": "done", "t": now()})
+        emit({"type": "test", "attempt": attempt, "ok": ok, "t": now(),
+              "summary": (r.stdout.strip().splitlines() or ["?"])[-1], "output": r.stdout[-1800:]})
+        if ok or attempt == 3:
             break
-        if attempt < 3:  # up to 2 repair passes by the debugger agent
-            src = (OUT / "app.py").read_text()
-            fix = await llm("nim", f"Tests failed:\n{r.stdout[-1500:]}\n\napp.py:\n{src}\n\n"
-                                   "Fix app.py ONLY. Return the full file in one code block.", "nim:debugger")
-            (OUT / "app.py").write_text(code(fix))
-            log("nim:debugger", "patched app.py")
-    log("orch", f"DONE in {time.time()-T0:.1f}s -> {OUT}")
-    print(f"Run it: cd {OUT} && uvicorn app:app --port 8800")
+        src = (out / "app.py").read_text()
+        tests = (out / "tests/test_app.py").read_text()
+        fix = await llm("debugger", "nim", f"Contract:\n{contract}\n\ntests/test_app.py:\n{tests}\n\n"
+                                           f"Test failures:\n{r.stdout[-1500:]}\n\napp.py:\n{src}\n\n"
+                                           "Fix app.py ONLY so every test passes and the contract is respected "
+                                           "(the tests encode the intended behavior). Return the full file in one code block.")
+        (out / "app.py").write_text(code(fix))
+        emit({"type": "file", "path": "app.py", "content": code(fix), "by": "debugger", "t": now()})
+    emit({"type": "done", "ok": ok, "secs": now(), "dir": str(out), "t": now()})
+    return out
 
 
-asyncio.run(main())
+def cli_emit(e):
+    who = f"{e.get('provider','orch')}:{e.get('name','')}" if e["type"] == "agent" else "orch"
+    c = C.get(who.split(":")[0], "")
+    msg = {"agent": lambda: e["status"] + (" - " + e["msg"] if e.get("msg") else ""),
+           "file": lambda: f"wrote {e['path']} ({len(e['content'].splitlines())} lines)",
+           "test": lambda: f"pytest attempt {e['attempt']}: {e['summary']}",
+           "contract": lambda: "contract written", "info": lambda: e["msg"],
+           "done": lambda: f"DONE ok={e['ok']} in {e['secs']}s -> {e['dir']}"}[e["type"]]()
+    print(f"{c}[{e['t']:5.1f}s] {who:<16}{C['end']} {msg}", flush=True)
+
+
+if __name__ == "__main__":
+    asyncio.run(run(sys.argv[1] if len(sys.argv) > 1 else "a URL shortener with click stats", cli_emit))
