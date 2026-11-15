@@ -30,8 +30,6 @@ def start_new_run(prompt: str) -> tuple[bool, str]:
         if _current_process is not None and _current_process.poll() is None:
             return False, "A run is already in progress."
 
-        shutil.rmtree(REPO_ROOT / ".agentforge", ignore_errors=True)
-        shutil.rmtree(REPO_ROOT / "workspace", ignore_errors=True)
 
         log_fh = LOG_FILE.open("w")
         venv_python = REPO_ROOT / "venv" / "bin" / "python3"

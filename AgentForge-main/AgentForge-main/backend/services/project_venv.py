@@ -40,6 +40,13 @@ def ensure_venv(project_root: str | Path, *, timeout: float = 120.0) -> Path:
             f"{(result.stderr or result.stdout).strip()}"
         )
 
+    # Speed: let the project venv see AgentForge's own installed packages (fastapi,
+    # pytest, httpx...) so `pip install -r requirements.txt` finds them satisfied.
+    # ponytail: assumes generated apps use the same libs; pip still installs anything missing.
+    import site
+    for sp in venv_dir(project_root).glob("lib/python*/site-packages"):
+        (sp / "_agentforge_base.pth").write_text("\n".join(site.getsitepackages()) + "\n")
+
     return python_path
 
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 
@@ -119,7 +120,17 @@ class WorkflowNodes:
         self,
         state: WorkflowState,
     ) -> WorkflowState:
-        return self.architect_agent.run(state)
+        state = self.architect_agent.run(state)
+        # Human approval checkpoint (patent obj. 9). Opt-in: AGENTFORGE_APPROVE=1.
+        # ponytail: stdin prompt, CLI only; web UI would need a pause/resume endpoint.
+        if os.environ.get("AGENTFORGE_APPROVE") == "1":
+            a = state.architecture
+            print("\n=== HUMAN APPROVAL: architecture ===")
+            print(a.architecture_summary or "(no summary)")
+            print("Components:", ", ".join(c.name for c in a.components) or "-")
+            if input("Approve and continue to coding? [y/N] ").strip().lower() != "y":
+                raise RuntimeError("Architecture rejected by human reviewer")
+        return state
 
     def developer(
         self,
