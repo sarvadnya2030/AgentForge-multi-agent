@@ -2,13 +2,28 @@
 """Presentation UI for the parallel multi-agent demo.  Run: python ui_server.py  -> http://localhost:8080"""
 import asyncio, json, os, socket, subprocess, sys
 from pathlib import Path
-from fastapi import FastAPI
+import base64, hmac
+from fastapi import FastAPI, Request
+from fastapi.responses import Response
 from fastapi.responses import FileResponse, StreamingResponse
 import parallel_demo as pd
 
 app = FastAPI()
+ACCESS_CODE = os.environ.get("ACCESS_CODE", "")  # set on a public deploy: browser asks for it (any username)
+
+
+@app.middleware("http")
+async def gate(request: Request, call_next):
+    if ACCESS_CODE:
+        try:
+            pw = base64.b64decode(request.headers.get("authorization", "")[6:]).decode().partition(":")[2]
+        except Exception:
+            pw = ""
+        if not hmac.compare_digest(pw, ACCESS_CODE):
+            return Response("Access code required", 401, {"WWW-Authenticate": 'Basic realm="AgentForge"'})
+    return await call_next(request)
 HERE = Path(__file__).parent
-IS_VERCEL = bool(os.environ.get("VERCEL"))
+IS_VERCEL = bool(os.environ.get("VERCEL") or os.environ.get("RENDER"))  # hosted: no localhost preview
 _lock = asyncio.Lock()  # one run at a time keeps the demo readable and API usage sane
 
 
@@ -58,4 +73,4 @@ async def run(idea: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT", 8080)))
+    uvicorn.run(app, host="0.0.0.0" if os.environ.get("RENDER") else "127.0.0.1", port=int(os.environ.get("PORT", 8080)))

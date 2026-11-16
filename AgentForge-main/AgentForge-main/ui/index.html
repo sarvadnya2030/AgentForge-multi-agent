@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AgentForge Live</title>
+<style>
+:root{color-scheme:dark;--bg:#0b0d10;--card:#14181d;--line:#262c34;--tx:#e6e9ee;--mut:#8a94a3;--gem:#5cc8ff;--nim:#6ee7a0;--loc:#c4b5fd;--orc:#fbbf24}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,sans-serif}
+main{max-width:980px;margin:0 auto;padding:24px 16px}
+h1{font-size:22px;margin:0 0 4px}p.s{color:var(--mut);margin:0 0 16px}
+form{display:flex;gap:8px;flex-wrap:wrap}
+input{flex:1;min-width:220px;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--tx);font:inherit}
+button{padding:10px 18px;border-radius:8px;border:0;background:var(--orc);color:#111;font-weight:600;cursor:pointer}
+button:disabled{opacity:.5;cursor:wait}
+#warn{color:#f87171;margin-top:8px}
+#log{margin-top:16px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;font:13px/1.6 ui-monospace,monospace;min-height:120px}
+.gemini{color:var(--gem)}.nim{color:var(--nim)}.local{color:var(--loc)}.orch{color:var(--orc)}.t{color:var(--mut)}
+#files{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+#files button{background:var(--card);color:var(--tx);border:1px solid var(--line);font-weight:400;padding:6px 12px}
+pre{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;overflow:auto;max-height:420px;font-size:12.5px}
+#res{margin-top:12px;font-weight:600}
+</style></head><body><main>
+<h1>AgentForge Live</h1>
+<p class="s">Parallel multi-agent build: Gemini + NVIDIA NIM agents write, test and debug a small app.</p>
+<form id="f"><input id="idea" value="a notes app with tags and search" maxlength="300" aria-label="Project idea"><button id="go">Build it</button></form>
+<div id="warn"></div><div id="log" aria-live="polite"></div><div id="res"></div><div id="files"></div><pre id="code" hidden></pre>
+</main><script>
+const $=id=>document.getElementById(id),files={};
+fetch('/api/health').then(r=>r.json()).then(h=>{if(!h.gemini_key||!h.nim_key)$('warn').textContent='Missing API key on the server: '+(!h.gemini_key?'GOOGLE_API_KEY ':'')+(!h.nim_key?'NVIDIA_API_KEY':'')}).catch(()=>{});
+function line(e){const d=document.createElement('div'),p=e.provider||'orch';
+ const m={agent:()=>`${e.name} ${e.status}${e.msg?' - '+e.msg:''}`,file:()=>`wrote ${e.path} (${e.content.split('\n').length} lines) by ${e.by}`,
+  test:()=>`pytest attempt ${e.attempt}: ${e.summary}`,contract:()=>'contract written',info:()=>e.msg,done:()=>`DONE ok=${e.ok} in ${e.secs}s`,
+  error:()=>'ERROR '+e.msg,preview:()=>'preview: '+e.url}[e.type];
+ const c=document.createElement('span');c.className=e.type==='agent'?p:'orch';c.textContent=(e.type==='agent'?p+':'+e.name:'orch').padEnd(18);
+ const t=document.createElement('span');t.className='t';t.textContent=e.t!=null?`[${e.t.toFixed(1)}s] `:'';
+ d.append(t,c,document.createTextNode(m?m():JSON.stringify(e)));$('log').append(d)}
+$('f').onsubmit=ev=>{ev.preventDefault();$('go').disabled=true;$('log').textContent='';$('res').textContent='';$('files').textContent='';$('code').hidden=true;
+ const es=new EventSource('/api/run?idea='+encodeURIComponent($('idea').value));
+ const end=()=>{es.close();$('go').disabled=false};
+ es.onmessage=m=>{const e=JSON.parse(m.data);line(e);
+  if(e.type==='file'){files[e.path]=e.content;if(![...$('files').children].some(b=>b.textContent===e.path)){const b=document.createElement('button');b.textContent=e.path;b.onclick=()=>{$('code').hidden=false;$('code').textContent=files[e.path]};$('files').append(b)}}
+  if(e.type==='done'){$('res').textContent=e.ok?'Tests pass. Click a file to read it.':'Finished, but tests still fail.';end()}
+  if(e.type==='error')end()};
+ es.onerror=()=>{if($('go').disabled){line({type:'error',msg:'connection lost'});end()}}};
+</script></body></html>

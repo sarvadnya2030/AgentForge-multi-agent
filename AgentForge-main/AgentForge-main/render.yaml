@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: agentforge-live
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements-demo.txt
+    startCommand: python ui_server.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: ACCESS_CODE
+        sync: false
