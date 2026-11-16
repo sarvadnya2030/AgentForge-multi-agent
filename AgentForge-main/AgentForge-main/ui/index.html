@@ -2,42 +2,94 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AgentForge Live</title>
 <style>
-:root{color-scheme:dark;--bg:#0b0d10;--card:#14181d;--line:#262c34;--tx:#e6e9ee;--mut:#8a94a3;--gem:#5cc8ff;--nim:#6ee7a0;--loc:#c4b5fd;--orc:#fbbf24}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,sans-serif}
-main{max-width:980px;margin:0 auto;padding:24px 16px}
-h1{font-size:22px;margin:0 0 4px}p.s{color:var(--mut);margin:0 0 16px}
-form{display:flex;gap:8px;flex-wrap:wrap}
-input{flex:1;min-width:220px;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--tx);font:inherit}
-button{padding:10px 18px;border-radius:8px;border:0;background:var(--orc);color:#111;font-weight:600;cursor:pointer}
-button:disabled{opacity:.5;cursor:wait}
-#warn{color:#f87171;margin-top:8px}
-#log{margin-top:16px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;font:13px/1.6 ui-monospace,monospace;min-height:120px}
-.gemini{color:var(--gem)}.nim{color:var(--nim)}.local{color:var(--loc)}.orch{color:var(--orc)}.t{color:var(--mut)}
-#files{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
-#files button{background:var(--card);color:var(--tx);border:1px solid var(--line);font-weight:400;padding:6px 12px}
-pre{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;overflow:auto;max-height:420px;font-size:12.5px}
-#res{margin-top:12px;font-weight:600}
+:root{color-scheme:dark;--bg:#050505;--card:#101012;--card2:#16161a;--line:#26262c;--tx:#ececf0;--mut:#8b8b96;--gold:#f5b942;--gem:#5cc8ff;--nim:#6ee7a0;--loc:#c4b5fd;--bad:#f87171}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(900px 400px at 50% -120px,#1c1608,transparent),var(--bg);color:var(--tx);font:15px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:1080px;margin:0 auto;padding:28px 16px 64px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{font-size:24px;margin:0;letter-spacing:-.3px}h1 b{color:var(--gold)}
+.sub{color:var(--mut);margin:4px 0 0}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:5px 12px;border:1px solid var(--line);border-radius:99px;color:var(--mut);font-size:13px;background:var(--card)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--mut)}
+.pill.run .dot{background:var(--gold);animation:p 1s infinite}.pill.ok .dot{background:var(--nim)}.pill.bad .dot{background:var(--bad)}
+@keyframes p{50%{opacity:.25}}
+form{display:flex;gap:8px;margin-top:20px;flex-wrap:wrap}
+input{flex:1;min-width:240px;padding:13px 15px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--tx);font:inherit}
+input:focus{outline:2px solid var(--gold);outline-offset:-1px}
+.go{padding:13px 26px;border-radius:12px;border:0;background:var(--gold);color:#111;font-weight:700;font-size:15px;cursor:pointer}
+.go:disabled{opacity:.5;cursor:wait}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.chip{padding:5px 12px;border:1px solid var(--line);border-radius:99px;background:transparent;color:var(--mut);font-size:13px;cursor:pointer}
+.chip:hover{color:var(--tx);border-color:var(--gold)}
+#warn{color:var(--bad);margin-top:10px;font-size:14px}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:1.2px;color:var(--mut);margin:26px 0 10px;font-weight:600}
+#agents{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.ag{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;transition:.2s;border-top:3px solid var(--line)}
+.ag .n{font-weight:600;font-size:14px}.ag .p{font-size:12px;color:var(--mut)}
+.ag .st{margin-top:8px;font-size:12px;color:var(--mut);display:flex;align-items:center;gap:6px}
+.ag.gemini{border-top-color:var(--gem)}.ag.nim{border-top-color:var(--nim)}.ag.local{border-top-color:var(--loc)}
+.ag.running{background:var(--card2);box-shadow:0 0 0 1px var(--gold);transform:translateY(-2px)}
+.ag.running .st{color:var(--gold)}.ag.done .st{color:var(--nim)}.ag.fallback .st{color:var(--gold)}
+.ag.idle{opacity:.45}
+#banner{display:none;margin-top:18px;padding:14px 16px;border-radius:12px;font-weight:600;border:1px solid}
+#banner.ok{display:block;color:var(--nim);border-color:#1f4a33;background:#0b1a12}
+#banner.bad{display:block;color:var(--bad);border-color:#5a2222;background:#1a0b0b}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+@media(max-width:820px){.cols{grid-template-columns:1fr}}
+#log{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;font:12.5px/1.7 ui-monospace,Menlo,Consolas,monospace;height:340px;overflow:auto}
+#log div{white-space:pre-wrap}.t{color:var(--mut)}
+.gemini{color:var(--gem)}.nim{color:var(--nim)}.local{color:var(--loc)}.orch{color:var(--gold)}.err{color:var(--bad)}
+.viewer{background:var(--card);border:1px solid var(--line);border-radius:12px;height:340px;display:flex;flex-direction:column;overflow:hidden}
+.tabs{display:flex;gap:4px;padding:8px;border-bottom:1px solid var(--line);flex-wrap:wrap;align-items:center}
+.tab{padding:4px 11px;border-radius:8px;border:0;background:transparent;color:var(--mut);cursor:pointer;font:13px ui-monospace,monospace}
+.tab.on{background:var(--card2);color:var(--gold)}
+.copy{margin-left:auto;font:12px system-ui;color:var(--mut);border:1px solid var(--line);border-radius:8px;padding:3px 10px;background:none;cursor:pointer}
+pre{margin:0;padding:12px;overflow:auto;flex:1;font:12.5px/1.6 ui-monospace,Menlo,Consolas,monospace;color:#d6d6de}
+.empty{color:var(--mut);padding:14px;font-size:14px}
 </style></head><body><main>
-<h1>AgentForge Live</h1>
-<p class="s">Parallel multi-agent build: Gemini + NVIDIA NIM agents write, test and debug a small app.</p>
-<form id="f"><input id="idea" value="a notes app with tags and search" maxlength="300" aria-label="Project idea"><button id="go">Build it</button></form>
-<div id="warn"></div><div id="log" aria-live="polite"></div><div id="res"></div><div id="files"></div><pre id="code" hidden></pre>
+<header>
+ <div><h1>Agent<b>Forge</b> Live</h1><p class="sub">Gemini and NVIDIA agents build, test and debug an app in parallel.</p></div>
+ <span class="pill" id="pill"><span class="dot"></span><span id="pt">Ready</span></span>
+</header>
+<form id="f"><input id="idea" value="a notes app with tags and search" maxlength="300" aria-label="Project idea"><button class="go" id="go">Build it</button></form>
+<div class="chips" id="chips"></div>
+<div id="warn"></div>
+<h2>Agents</h2><div id="agents"></div>
+<div id="banner"></div>
+<div class="cols">
+ <div><h2>Activity</h2><div id="log" aria-live="polite"></div></div>
+ <div><h2>Generated files</h2><div class="viewer"><div class="tabs" id="tabs"></div><pre id="code"><span class="empty">Files appear here as each agent finishes.</span></pre></div></div>
+</div>
 </main><script>
-const $=id=>document.getElementById(id),files={};
+const $=id=>document.getElementById(id);
+const AG=[['planner','gemini'],['backend','gemini'],['tester','gemini'],['frontend','nim'],['docs','nim'],['integrator','local'],['debugger','nim']];
+const IDEAS=['a notes app with tags and search','a habit tracker with daily check-ins and streaks','a URL shortener with click stats','a todo list API with due dates'];
+let files={},cur=null,timer=null,t0=0;
+IDEAS.forEach(i=>{const b=document.createElement('button');b.type='button';b.className='chip';b.textContent=i;b.onclick=()=>$('idea').value=i;$('chips').append(b)});
 fetch('/api/health').then(r=>r.json()).then(h=>{if(!h.gemini_key||!h.nim_key)$('warn').textContent='Missing API key on the server: '+(!h.gemini_key?'GOOGLE_API_KEY ':'')+(!h.nim_key?'NVIDIA_API_KEY':'')}).catch(()=>{});
-function line(e){const d=document.createElement('div'),p=e.provider||'orch';
- const m={agent:()=>`${e.name} ${e.status}${e.msg?' - '+e.msg:''}`,file:()=>`wrote ${e.path} (${e.content.split('\n').length} lines) by ${e.by}`,
-  test:()=>`pytest attempt ${e.attempt}: ${e.summary}`,contract:()=>'contract written',info:()=>e.msg,done:()=>`DONE ok=${e.ok} in ${e.secs}s`,
-  error:()=>'ERROR '+e.msg,preview:()=>'preview: '+e.url}[e.type];
- const c=document.createElement('span');c.className=e.type==='agent'?p:'orch';c.textContent=(e.type==='agent'?p+':'+e.name:'orch').padEnd(18);
- const t=document.createElement('span');t.className='t';t.textContent=e.t!=null?`[${e.t.toFixed(1)}s] `:'';
- d.append(t,c,document.createTextNode(m?m():JSON.stringify(e)));$('log').append(d)}
-$('f').onsubmit=ev=>{ev.preventDefault();$('go').disabled=true;$('log').textContent='';$('res').textContent='';$('files').textContent='';$('code').hidden=true;
+function reset(){files={};cur=null;$('log').textContent='';$('tabs').textContent='';$('code').innerHTML='<span class="empty">Files appear here as each agent finishes.</span>';$('banner').className='';$('banner').textContent='';
+ $('agents').textContent='';AG.forEach(([n,p])=>{const d=document.createElement('div');d.className='ag idle '+p;d.id='ag-'+n;d.innerHTML=`<div class="n">${n}</div><div class="p">${p==='local'?'runs pytest':p==='nim'?'NVIDIA NIM':'Gemini'}</div><div class="st">waiting</div>`;$('agents').append(d)})}
+function status(s,t){$('pill').className='pill '+s;$('pt').textContent=t}
+function setAg(e){const d=$('ag-'+e.name);if(!d)return;const m={start:['running','working…'],done:['done','done ✓'],fallback:['fallback','switching model']}[e.status];if(!m)return;
+ d.className='ag '+m[0]+' '+e.provider;d.querySelector('.st').textContent=m[1]}
+function log(e){const d=document.createElement('div'),p=e.provider||'orch';
+ const m={agent:()=>`${e.name} ${e.status}${e.msg?' - '+e.msg:''}`,file:()=>`wrote ${e.path} (${e.content.split('\n').length} lines) by ${e.by}`,test:()=>`pytest attempt ${e.attempt}: ${e.summary}`,
+  contract:()=>'contract written',info:()=>e.msg,done:()=>`DONE ok=${e.ok} in ${e.secs}s`,error:()=>'ERROR '+e.msg,preview:()=>'preview: '+e.url}[e.type];
+ const a=document.createElement('span');a.className='t';a.textContent=e.t!=null?`[${e.t.toFixed(1)}s] `:'';
+ const b=document.createElement('span');b.className=e.type==='error'?'err':e.type==='agent'?p:'orch';b.textContent=m?m():JSON.stringify(e);d.append(a,b);$('log').append(d);$('log').scrollTop=1e9}
+function show(p){cur=p;[...$('tabs').children].forEach(b=>b.classList.toggle('on',b.dataset.p===p));$('code').textContent=files[p]}
+function addFile(e){files[e.path]=e.content;if(![...$('tabs').children].some(b=>b.dataset.p===e.path)){const b=document.createElement('button');b.className='tab';b.dataset.p=e.path;b.textContent=e.path;b.onclick=()=>show(e.path);
+  const c=$('tabs').querySelector('.copy');$('tabs').insertBefore(b,c)}
+ if(!$('tabs').querySelector('.copy')){const c=document.createElement('button');c.className='copy';c.textContent='Copy';c.onclick=()=>navigator.clipboard.writeText(files[cur]||'').then(()=>{c.textContent='Copied';setTimeout(()=>c.textContent='Copy',1200)});$('tabs').append(c);}
+ if(cur===e.path||!cur)show(e.path)}
+function end(es,ok,msg){clearInterval(timer);es.close();$('go').disabled=false;status(ok?'ok':'bad',msg)}
+$('f').onsubmit=ev=>{ev.preventDefault();reset();$('go').disabled=true;t0=Date.now();status('run','Running 0s');
+ timer=setInterval(()=>{$('pt').textContent='Running '+Math.round((Date.now()-t0)/1000)+'s'},500);
  const es=new EventSource('/api/run?idea='+encodeURIComponent($('idea').value));
- const end=()=>{es.close();$('go').disabled=false};
- es.onmessage=m=>{const e=JSON.parse(m.data);line(e);
-  if(e.type==='file'){files[e.path]=e.content;if(![...$('files').children].some(b=>b.textContent===e.path)){const b=document.createElement('button');b.textContent=e.path;b.onclick=()=>{$('code').hidden=false;$('code').textContent=files[e.path]};$('files').append(b)}}
-  if(e.type==='done'){$('res').textContent=e.ok?'Tests pass. Click a file to read it.':'Finished, but tests still fail.';end()}
-  if(e.type==='error')end()};
- es.onerror=()=>{if($('go').disabled){line({type:'error',msg:'connection lost'});end()}}};
+ es.onmessage=m=>{const e=JSON.parse(m.data);log(e);
+  if(e.type==='agent')setAg(e);if(e.type==='file')addFile(e);
+  if(e.type==='done'){$('banner').className=e.ok?'ok':'bad';$('banner').textContent=e.ok?`All tests pass. Built in ${e.secs}s - click a file tab to read the code.`:'Finished, but some tests still fail.';end(es,e.ok,e.ok?`Done in ${e.secs}s`:'Tests failing')}
+  if(e.type==='error'){$('banner').className='bad';$('banner').textContent=e.msg;end(es,false,'Error')}};
+ es.onerror=()=>{if($('go').disabled){log({type:'error',msg:'connection lost'});end(es,false,'Disconnected')}}};
+reset();
 </script></body></html>
